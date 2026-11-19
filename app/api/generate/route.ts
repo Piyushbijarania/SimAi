@@ -139,6 +139,28 @@ export async function POST(req: Request) {
   }
 
   if (!groqRes.ok) {
+    // Try alternative Groq models before giving up
+    const fallbackGroqModels = ["llama-3.1-8b-instant", "openai/gpt-oss-120b"];
+    for (const altModel of fallbackGroqModels) {
+      if (altModel === modelId) continue;
+      try {
+        const altRes = await groqChatCompletion(
+          groqApiKey!,
+          altModel,
+          SYSTEM_PROMPT,
+          prompt
+        );
+        if (altRes.ok && altRes.body) {
+          const plainStream = groqSseBodyToPlainText(altRes.body);
+          return new Response(plainStream, {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+          });
+        }
+      } catch {
+        /* try next */
+      }
+    }
+
     let message = groqRes.statusText || "Groq request failed";
     try {
       const j = await groqRes.json();
