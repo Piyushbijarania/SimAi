@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const base = process.env.NEXT_PUBLIC_APP_URL!;
+  const base = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
   const params = new URLSearchParams({
-    client_id: process.env.GITHUB_CLIENT_ID!,
+    client_id: process.env.GITHUB_CLIENT_ID || "",
     redirect_uri: `${base}/auth/callback?provider=github`,
     scope: "user:email",
   });

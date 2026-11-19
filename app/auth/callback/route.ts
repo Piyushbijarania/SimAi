@@ -7,26 +7,22 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
   const provider = searchParams.get("provider");
-  const base = process.env.NEXT_PUBLIC_APP_URL!;
+  const base = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
 
   if (!code || !provider) {
     return NextResponse.redirect(new URL("/login?error=missing_params", req.url));
   }
 
+  if (provider !== "github") {
+    return NextResponse.redirect(
+      new URL("/login?error=unknown_provider", req.url)
+    );
+  }
+
   try {
-    let profile: {
-      id: string;
-      email: string;
-      name: string;
-      avatar: string | null;
-    };
+    const redirectUri = `${base}/auth/callback?provider=github`;
 
-    if (provider !== "github") {
-      return NextResponse.redirect(
-        new URL("/login?error=unknown_provider", req.url)
-      );
-    }
-
+    // 1. Exchange OAuth code for GitHub access token
     const tokenRes = await fetch(
       "https://github.com/login/oauth/access_token",
       {
@@ -34,45 +30,79 @@ export async function GET(req: NextRequest) {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          "User-Agent": "SimAI-OAuth",
         },
         body: JSON.stringify({
-          client_id: process.env.GITHUB_CLIENT_ID!,
-          client_secret: process.env.GITHUB_CLIENT_SECRET!,
+          client_id: process.env.GITHUB_CLIENT_ID?.trim(),
+          client_secret: process.env.GITHUB_CLIENT_SECRET?.trim(),
           code,
-          redirect_uri: `${base}/auth/callback?provider=github`,
+          redirect_uri: redirectUri,
         }),
       }
     );
+
     const tokens = await tokenRes.json();
     if (!tokens.access_token) {
-      throw new Error("GitHub token exchange failed");
+      console.error("GitHub token exchange failed:", tokens);
+      const desc = tokens.error_description || tokens.error || "Token exchange failed";
+      return NextResponse.redirect(
+        new URL(`/login?error=auth_failed&reason=${encodeURIComponent(desc)}`, req.url)
+      );
     }
 
+    // 2. Fetch GitHub User Profile (GitHub requires User-Agent header)
     const profileRes = await fetch("https://api.github.com/user", {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
+      headers: {
+        Authorization: `Bearer ${tokens.access_token}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "SimAI-OAuth",
+      },
     });
-    const data = await profileRes.json();
 
+    const data = await profileRes.json();
+    if (!profileRes.ok || !data.id) {
+      console.error("GitHub profile fetch failed:", data);
+      const desc = data.message || "Failed to fetch GitHub profile";
+      return NextResponse.redirect(
+        new URL(`/login?error=auth_failed&reason=${encodeURIComponent(desc)}`, req.url)
+      );
+    }
+
+    // 3. Fetch GitHub User Email if private
     let email: string | null = data.email;
     if (!email) {
-      const emailRes = await fetch("https://api.github.com/user/emails", {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      const emails = await emailRes.json();
-      const primary = Array.isArray(emails)
-        ? emails.find((e: { primary?: boolean; email?: string }) => e.primary)
-        : null;
-      email = primary?.email ?? null;
+      try {
+        const emailRes = await fetch("https://api.github.com/user/emails", {
+          headers: {
+            Authorization: `Bearer ${tokens.access_token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "SimAI-OAuth",
+          },
+        });
+        const emails = await emailRes.json();
+        if (Array.isArray(emails)) {
+          const primary = emails.find(
+            (e: { primary?: boolean; verified?: boolean; email?: string }) =>
+              e.primary && e.verified
+          ) ?? emails.find(
+            (e: { primary?: boolean; email?: string }) => e.primary
+          ) ?? emails[0];
+          email = primary?.email ?? null;
+        }
+      } catch (err) {
+        console.warn("Failed to fetch GitHub emails list:", err);
+      }
     }
 
     const login = data.login as string;
-    profile = {
+    const profile = {
       id: `github_${data.id}`,
       email: email ?? `${login}@users.noreply.github.com`,
-      name: (data.name as string) ?? login,
+      name: (data.name as string) || login || "GitHub User",
       avatar: (data.avatar_url as string) ?? null,
     };
 
+    // 4. Upsert user in database
     const [user] = await db
       .insert(users)
       .values({
@@ -92,9 +122,10 @@ export async function GET(req: NextRequest) {
       .returning({ id: users.id });
 
     if (!user) {
-      throw new Error("User upsert failed");
+      throw new Error("User database upsert failed");
     }
 
+    // 5. Sign JWT session token
     const token = await signToken({
       userId: user.id,
       email: profile.email,
@@ -111,8 +142,11 @@ export async function GET(req: NextRequest) {
       path: "/",
     });
     return response;
-  } catch (err) {
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : "auth_failed";
     console.error("Auth callback error:", err);
-    return NextResponse.redirect(new URL("/login?error=auth_failed", req.url));
+    return NextResponse.redirect(
+      new URL(`/login?error=auth_failed&reason=${encodeURIComponent(errorMsg)}`, req.url)
+    );
   }
 }

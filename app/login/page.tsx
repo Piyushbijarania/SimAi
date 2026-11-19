@@ -4,9 +4,10 @@ import { Logo } from "@/components/Logo";
 export default function LoginPage({
   searchParams,
 }: {
-  searchParams: { error?: string };
+  searchParams: { error?: string; reason?: string };
 }) {
   const err = searchParams.error;
+  const reason = searchParams.reason;
   const devPassword = process.env.DEV_ADMIN_PASSWORD;
   const devLoginReady =
     typeof devPassword === "string" && devPassword.length >= 8;
@@ -35,7 +36,12 @@ export default function LoginPage({
             className="mb-6 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-2 text-center text-sm text-[var(--danger)]"
             role="alert"
           >
-            Authentication failed. Please try again.
+            <p className="font-medium">Authentication failed.</p>
+            {reason ? (
+              <p className="mt-1 text-xs opacity-90">{reason}</p>
+            ) : (
+              <p className="mt-1 text-xs opacity-90">Please try again.</p>
+            )}
           </div>
         )}
         {(err === "missing_params" || err === "unknown_provider") && (
