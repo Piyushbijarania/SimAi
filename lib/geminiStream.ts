@@ -1,6 +1,6 @@
 export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
 export async function geminiChatCompletion(
   apiKey: string,

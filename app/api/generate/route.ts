@@ -44,10 +44,13 @@ export async function POST(req: Request) {
 
   // Preferred provider: Gemini if key is provided
   if (geminiApiKey) {
-    const modelId =
+    let modelId =
       process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+    if (modelId === "gemini-2.5-flash") {
+      modelId = DEFAULT_GEMINI_MODEL;
+    }
 
-    let geminiRes: Response;
+    let geminiRes: Response | null = null;
     try {
       geminiRes = await geminiChatCompletion(
         geminiApiKey,
@@ -57,13 +60,15 @@ export async function POST(req: Request) {
       );
     } catch (e) {
       console.error("Gemini fetch error:", e);
-      return Response.json(
-        { error: "Could not reach Google Gemini. Check network and GEMINI_API_KEY." },
-        { status: 502 }
-      );
+      if (!groqApiKey) {
+        return Response.json(
+          { error: "Could not reach Google Gemini. Check network and GEMINI_API_KEY." },
+          { status: 502 }
+        );
+      }
     }
 
-    if (!geminiRes.ok) {
+    if (geminiRes && !geminiRes.ok) {
       let message = geminiRes.statusText || "Gemini request failed";
       try {
         const j = await geminiRes.json();
@@ -72,29 +77,23 @@ export async function POST(req: Request) {
       } catch {
         /* ignore */
       }
+      console.warn("Gemini error:", message);
 
-      const clientStatus =
-        geminiRes.status === 401 || geminiRes.status === 403
-          ? 502
-          : geminiRes.status >= 500
+      if (!groqApiKey) {
+        const clientStatus =
+          geminiRes.status === 401 || geminiRes.status === 403
             ? 502
-            : geminiRes.status;
-
-      return Response.json({ error: message }, { status: clientStatus });
+            : geminiRes.status >= 500
+              ? 502
+              : geminiRes.status;
+        return Response.json({ error: message }, { status: clientStatus });
+      }
+    } else if (geminiRes && geminiRes.body) {
+      const plainStream = geminiSseBodyToPlainText(geminiRes.body);
+      return new Response(plainStream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
     }
-
-    if (!geminiRes.body) {
-      return Response.json(
-        { error: "Empty response from Gemini" },
-        { status: 502 }
-      );
-    }
-
-    const plainStream = geminiSseBodyToPlainText(geminiRes.body);
-
-    return new Response(plainStream, {
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
   }
 
   // Fallback provider: Groq
