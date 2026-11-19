@@ -21,87 +21,57 @@ export async function GET(req: NextRequest) {
       avatar: string | null;
     };
 
-    if (provider === "google") {
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          code,
-          client_id: process.env.GOOGLE_CLIENT_ID!,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-          redirect_uri: `${base}/auth/callback?provider=google`,
-          grant_type: "authorization_code",
-        }),
-      });
-      const tokens = await tokenRes.json();
-      if (!tokens.access_token) {
-        throw new Error("Google token exchange failed");
-      }
-
-      const profileRes = await fetch(
-        "https://www.googleapis.com/oauth2/v2/userinfo",
-        {
-          headers: { Authorization: `Bearer ${tokens.access_token}` },
-        }
-      );
-      const data = await profileRes.json();
-      profile = {
-        id: `google_${data.id}`,
-        email: data.email ?? `${data.id}@google.oauth`,
-        name: data.name ?? "Google user",
-        avatar: data.picture ?? null,
-      };
-    } else if (provider === "github") {
-      const tokenRes = await fetch(
-        "https://github.com/login/oauth/access_token",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            client_id: process.env.GITHUB_CLIENT_ID!,
-            client_secret: process.env.GITHUB_CLIENT_SECRET!,
-            code,
-            redirect_uri: `${base}/auth/callback?provider=github`,
-          }),
-        }
-      );
-      const tokens = await tokenRes.json();
-      if (!tokens.access_token) {
-        throw new Error("GitHub token exchange failed");
-      }
-
-      const profileRes = await fetch("https://api.github.com/user", {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      const data = await profileRes.json();
-
-      let email: string | null = data.email;
-      if (!email) {
-        const emailRes = await fetch("https://api.github.com/user/emails", {
-          headers: { Authorization: `Bearer ${tokens.access_token}` },
-        });
-        const emails = await emailRes.json();
-        const primary = Array.isArray(emails)
-          ? emails.find((e: { primary?: boolean; email?: string }) => e.primary)
-          : null;
-        email = primary?.email ?? null;
-      }
-
-      const login = data.login as string;
-      profile = {
-        id: `github_${data.id}`,
-        email: email ?? `${login}@users.noreply.github.com`,
-        name: (data.name as string) ?? login,
-        avatar: (data.avatar_url as string) ?? null,
-      };
-    } else {
+    if (provider !== "github") {
       return NextResponse.redirect(
         new URL("/login?error=unknown_provider", req.url)
       );
     }
+
+    const tokenRes = await fetch(
+      "https://github.com/login/oauth/access_token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          client_id: process.env.GITHUB_CLIENT_ID!,
+          client_secret: process.env.GITHUB_CLIENT_SECRET!,
+          code,
+          redirect_uri: `${base}/auth/callback?provider=github`,
+        }),
+      }
+    );
+    const tokens = await tokenRes.json();
+    if (!tokens.access_token) {
+      throw new Error("GitHub token exchange failed");
+    }
+
+    const profileRes = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const data = await profileRes.json();
+
+    let email: string | null = data.email;
+    if (!email) {
+      const emailRes = await fetch("https://api.github.com/user/emails", {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+      const emails = await emailRes.json();
+      const primary = Array.isArray(emails)
+        ? emails.find((e: { primary?: boolean; email?: string }) => e.primary)
+        : null;
+      email = primary?.email ?? null;
+    }
+
+    const login = data.login as string;
+    profile = {
+      id: `github_${data.id}`,
+      email: email ?? `${login}@users.noreply.github.com`,
+      name: (data.name as string) ?? login,
+      avatar: (data.avatar_url as string) ?? null,
+    };
 
     const [user] = await db
       .insert(users)

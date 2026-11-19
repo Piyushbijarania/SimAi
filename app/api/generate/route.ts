@@ -1,6 +1,11 @@
 import { SYSTEM_PROMPT } from "@/lib/geminiPrompt";
 import { getCurrentUser } from "@/lib/auth";
 import {
+  DEFAULT_GEMINI_MODEL,
+  geminiChatCompletion,
+  geminiSseBodyToPlainText,
+} from "@/lib/geminiStream";
+import {
   DEFAULT_GROQ_MODEL,
   groqChatCompletion,
   groqSseBodyToPlainText,
@@ -27,21 +32,79 @@ export async function POST(req: Request) {
     return Response.json({ error: "Prompt required" }, { status: 400 });
   }
 
-  const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey) {
+  const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+  const groqApiKey = process.env.GROQ_API_KEY?.trim();
+
+  if (!geminiApiKey && !groqApiKey) {
     return Response.json(
-      { error: "Server misconfiguration: missing GROQ_API_KEY" },
+      { error: "Server misconfiguration: missing GEMINI_API_KEY or GROQ_API_KEY" },
       { status: 500 }
     );
   }
 
+  // Preferred provider: Gemini if key is provided
+  if (geminiApiKey) {
+    const modelId =
+      process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+
+    let geminiRes: Response;
+    try {
+      geminiRes = await geminiChatCompletion(
+        geminiApiKey,
+        modelId,
+        SYSTEM_PROMPT,
+        prompt
+      );
+    } catch (e) {
+      console.error("Gemini fetch error:", e);
+      return Response.json(
+        { error: "Could not reach Google Gemini. Check network and GEMINI_API_KEY." },
+        { status: 502 }
+      );
+    }
+
+    if (!geminiRes.ok) {
+      let message = geminiRes.statusText || "Gemini request failed";
+      try {
+        const j = await geminiRes.json();
+        const m = j?.error?.message ?? j?.message;
+        if (typeof m === "string") message = m;
+      } catch {
+        /* ignore */
+      }
+
+      const clientStatus =
+        geminiRes.status === 401 || geminiRes.status === 403
+          ? 502
+          : geminiRes.status >= 500
+            ? 502
+            : geminiRes.status;
+
+      return Response.json({ error: message }, { status: clientStatus });
+    }
+
+    if (!geminiRes.body) {
+      return Response.json(
+        { error: "Empty response from Gemini" },
+        { status: 502 }
+      );
+    }
+
+    const plainStream = geminiSseBodyToPlainText(geminiRes.body);
+
+    return new Response(plainStream, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+
+  // Fallback provider: Groq
   const modelId =
     process.env.GROQ_MODEL?.trim() || DEFAULT_GROQ_MODEL;
 
   let groqRes: Response;
   try {
     groqRes = await groqChatCompletion(
-      apiKey,
+      groqApiKey!,
       modelId,
       SYSTEM_PROMPT,
       prompt

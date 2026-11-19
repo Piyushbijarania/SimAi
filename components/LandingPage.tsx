@@ -158,7 +158,7 @@ export function LandingPage() {
                 {
                   step: "01",
                   title: "Sign in",
-                  text: "Use Google, GitHub, or a dev login—no separate signup flow.",
+                  text: "Use GitHub or a dev login—no separate signup flow.",
                 },
                 {
                   step: "02",
