@@ -1,6 +1,6 @@
 export const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-export const DEFAULT_GROQ_MODEL = "meta-llama/llama-3.1-8b-instant";
+export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 
 export async function groqChatCompletion( 
   apiKey: string,

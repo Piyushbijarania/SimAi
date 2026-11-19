@@ -79,6 +79,28 @@ export async function POST(req: Request) {
       }
       console.warn("Gemini error:", message);
 
+      // If high demand or temporary error, try fallback Gemini models (e.g. gemini-2.0-flash, gemini-1.5-flash)
+      const fallbackModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+      for (const fbModel of fallbackModels) {
+        if (fbModel === modelId) continue;
+        try {
+          const fbRes = await geminiChatCompletion(
+            geminiApiKey,
+            fbModel,
+            SYSTEM_PROMPT,
+            prompt
+          );
+          if (fbRes.ok && fbRes.body) {
+            const plainStream = geminiSseBodyToPlainText(fbRes.body);
+            return new Response(plainStream, {
+              headers: { "Content-Type": "text/plain; charset=utf-8" },
+            });
+          }
+        } catch {
+          /* try next fallback */
+        }
+      }
+
       if (!groqApiKey) {
         const clientStatus =
           geminiRes.status === 401 || geminiRes.status === 403
